@@ -3,7 +3,6 @@ package main
 import (
   "bufio"
   "io/ioutil"
-  "fmt"
   "os"
   "strings"
 
@@ -37,29 +36,75 @@ func split_at_commas(raw_string string) []string {
   return strings.Split(raw_string, ",")
 }
 
-func depth_prefix(raw_string string, depth int) string {
+func balanced(raw_string string) bool {
+  opening := strings.Count(raw_string, "[")
+  closing := strings.Count(raw_string, "]")
+  return opening == closing
+}
+
+func remove_enclosing_square_brackets(raw_string string) string {
+  strip_left := 0
+  strip_right := 0
+  trimmed_string := strings.TrimSpace(raw_string)
+
+  for i := 0; i < len(trimmed_string); i++ {
+    if trimmed_string[i] == '[' {
+      strip_left += 1
+    } else {
+      break
+    }
+  }
+  for j := 0; j < len(trimmed_string); j++ {
+    if trimmed_string[len(trimmed_string) - j - 1] == ']' {
+      strip_right += 1
+    } else {
+      break
+    }
+  }
+  return trimmed_string[strip_left:len(trimmed_string) - strip_right]
+}
+
+func add_indentation(raw_string string, depth int) string {
   indented_string := ""
   for i := 0; i < depth; i++ {
     indented_string += "  "
   }
-  return indented_string + "* "+ strings.TrimSpace(raw_string)
+  return indented_string + "* " + remove_enclosing_square_brackets(raw_string)
 }
 
-func extract_array_contents(raw_string string) []string {
-  println(raw_string)
+func unpack_array_contents(raw_string string) []string {
+  if len(raw_string) <= 2 {
+    return []string{}
+  }
+
   depth := 0
   elements := split_at_commas(raw_string)
   var spaced_elements []string
 
   for i := 0; i < len(elements); i++ {
-    if strings.HasPrefix(strings.TrimSpace(elements[i]), "[") {
-      depth += 1
+    element := strings.TrimSpace(elements[i])
+    element_length := len(element)
+
+    for _, c := range element {
+      if c == '[' {
+        depth += 1
+      } else if c == ' ' {
+        continue
+      } else {
+        break
+      }
     }
 
-    spaced_elements = append(spaced_elements, depth_prefix(elements[i], depth))
+    spaced_elements = append(spaced_elements, add_indentation(element, depth))
 
-    if strings.HasSuffix(strings.TrimSpace(elements[i]), "]") {
-      depth -= 1
+    for j := 0; j < element_length; j++ {
+      if element[element_length - j - 1] == ']' {
+        depth -= 1
+      } else if element[element_length - j - 1] == ' ' {
+        continue
+      } else {
+        break
+      }
     }
   }
   return spaced_elements
@@ -102,7 +147,7 @@ func append_to_file(text_to_write string, f *os.File) {
 
 
 /* 
-  TEMPLATE & MARKDOWN GENERATION
+  TEMPLATE GENERATION
 */
 
 func generate_template(template_name string) {
@@ -112,28 +157,39 @@ func generate_template(template_name string) {
 
   append_to_file("Title:\t", f)
 
-  append_to_file("Description:", f)
+  append_to_file("\nDescription:", f)
   append_to_file("\tText: |\n", f)
 
-  append_to_file("Screenshot:", f)
+  append_to_file("\nScreenshot:", f)
   append_to_file("\tURL:", f)
 
-  append_to_file("Demo:", f)
+  append_to_file("\nDemo:", f)
   append_to_file("\tURL:", f)
   append_to_file("\tText: |\n", f)
 
-  append_to_file("Usage:", f)
+  append_to_file("\nUsage:", f)
+  append_to_file("\tBulletPoints: []", f)
+  append_to_file("\tCode:\n", f)
+  append_to_file("\t\tSyntax:\n", f)
+  append_to_file("\t\tContent: |\n", f)
+  append_to_file("\tText: |\n", f)
+
+  append_to_file("\nFeatures:", f)
   append_to_file("\tBulletPoints: []", f)
   append_to_file("\tText: |\n", f)
 
-  append_to_file("Features:", f)
-  append_to_file("\tBulletPoints: []", f)
+  append_to_file("\nNotes:", f)
   append_to_file("\tText: |\n", f)
 
-  append_to_file("TODO:", f)
+  append_to_file("\nTODO:", f)
   append_to_file("\tBulletPoints: []", f)
   append_to_file("\tText: |\n", f)
 }
+
+
+/*
+  README GENERATION
+*/
 
 func generate_readme(input string, output string) {
   input_file := read_file(input)
@@ -142,46 +198,72 @@ func generate_readme(input string, output string) {
   defer output_file.Close()
 
   scanner := bufio.NewScanner(input_file)
+  code_block := false
 
   for scanner.Scan() {
-    if scanner.Text() == "" {
-      append_to_file("\n", output_file)
+    stripped_text := strings.TrimSpace(scanner.Text())
 
-    } else if strings.HasPrefix(scanner.Text(), "Title") {
+    if stripped_text == "" {
+      continue
+    } else if strings.HasPrefix(stripped_text, "Title") && has_colon(stripped_text) {
+
       // Title: Will only match once
-      heading := "# " + text_after_colon(scanner.Text())
+      heading := "# " + text_after_colon(stripped_text)
       append_to_file(heading, output_file)
 
-    } else if !strings.HasPrefix(scanner.Text(), "\t") && has_colon(scanner.Text()) {
+    } else if !strings.HasPrefix(scanner.Text(), "\t") && !strings.HasPrefix(scanner.Text(), " ") && has_colon(stripped_text) {
+
       // Subheading: Will match multiple times
-      subheading := split_at_colon(scanner.Text())
+      subheading := split_at_colon(stripped_text)
+      if code_block == true {
+        code_block = false
+        append_to_file("```", output_file)
+      }
       if len(subheading) > 1 && subheading[1] != ""  {
-        append_to_file("### " + string(subheading[1]), output_file)
+        append_to_file("\n### " + string(subheading[1]) + "\n", output_file)
       } else {
-        append_to_file("###" + string(subheading[0]), output_file)
+        append_to_file("\n### " + string(subheading[0]) + "\n", output_file)
       }
 
     } else {
-      stripped_text := strings.TrimSpace(scanner.Text())
 
-      if strings.HasPrefix(stripped_text, "URL") {
+      if strings.HasPrefix(stripped_text, "URL") && has_colon(stripped_text) {
+
         // URL Link: Can Match Multiple Times
         url := "See a demo [Here](" + text_after_colon(stripped_text) + ")"
         append_to_file(url, output_file)
 
-      } else if strings.HasPrefix(stripped_text, "ImageURL"){
+      } else if strings.HasPrefix(stripped_text, "ImageURL") && has_colon(stripped_text) {
+
         // Screenshot URL: Can Match Multiple Times
         url := "![Screenshot](" + text_after_colon(stripped_text) + ")"
         append_to_file(url, output_file)
 
-      } else if strings.HasPrefix(stripped_text, "BulletPoints"){
-        points := text_after_colon(stripped_text)
-        spaced_points := extract_array_contents(points)
-        for i := 0; i < len(spaced_points); i++ {
-          append_to_file(spaced_points[i], output_file)
+      } else if strings.HasPrefix(stripped_text, "BulletPoints") && has_colon(stripped_text) {
+
+        all_points := text_after_colon(stripped_text)
+        indented_points := unpack_array_contents(all_points)
+        for i := 0; i < len(indented_points); i++ {
+          append_to_file(indented_points[i], output_file)
         }
-      } else if strings.HasPrefix(stripped_text, "Text"){
-        append_to_file("\n", output_file)
+
+      } else if (strings.HasPrefix(stripped_text, "Text") || strings.HasPrefix(stripped_text, "Code")) && has_colon(stripped_text) {
+
+        if code_block == true {
+          code_block = false
+          append_to_file("```", output_file)
+        }
+        continue
+
+      } else if strings.HasPrefix(stripped_text, "Syntax") && has_colon(stripped_text) {
+
+        code_block = true
+        append_to_file("```" + text_after_colon(stripped_text), output_file)
+
+      } else if strings.HasPrefix(stripped_text, "Content") && has_colon(stripped_text) {
+        //append_to_file(text_after_colon(stripped_text), output_file)
+        continue
+
       } else {
         append_to_file(stripped_text, output_file)
       }
@@ -196,7 +278,6 @@ func main() {
 
   app := cli.NewApp()
   app.Name = "Github Readme Maker"
-  app.Usage = "go write_file [-i <input_file>] [-o <output_file>]"
   app.Flags = []cli.Flag {
     cli.StringFlag{
       Name:        "i, input",
@@ -207,8 +288,8 @@ func main() {
     cli.StringFlag{
       Name:        "o, output",
       Value:       "",
-      Usage:       "If input provided: output location to generate README file (if input provided)." +
-                   "\nIf input not provided:, output location for blank template",
+      Usage:       "If input provided : output location to generate README file (if input provided)." +
+                   "\n\tIf input not provided : output location for blank template",
       Destination: &output,
     },
   }
@@ -216,13 +297,18 @@ func main() {
     if input == "" && output != "" {
       // If only the output is specified, generate a blank template file here
       generate_template(output)
+      println("Blank Template Genereated at: " + output + "\n")
+
     } else if input != "" && output != "" {
       // If input and output are specified, take input as filled in readme and create the readme as the output
       generate_readme(input, output)
+      println("\nREADME Genereated at: " + output + "\n")
+
     } else {
-      println("Incorrect usage")
+      cli.ShowAppHelp(c)
     }
   }
 
   app.Run(os.Args)
 }
+
